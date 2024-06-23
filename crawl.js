@@ -92,28 +92,117 @@ function normalizeURL(urlString) {
 }
 
 function getURLsFromHTML(htmlBody, baseURL) {
-    //relative paths start with '/'
-    const links = []
-    for (const line of htmlBody.split('\n')) {
-        if (line.includes('<a')) {
-            let regLine = line.match(/href=\"(.*)\">/g).pop()
-            regLine = regLine.replace(/href=\"/g, '').replace(/\">/g, '')
-            links.push(regLine)
+    //retrieve every link-pattern using href
+    const links = [];
+    const regex = /href="([^"]*)"/g;
+    let match;
+
+    //retrieve each match from the first result of capture body
+    while ((match = regex.exec(htmlBody)) !== null) {
+        //resolve relative links
+        const matchLink = match[1];
+        if (matchLink[0] === '/') {
+            let newMatchLink = '';
+            if (matchLink.length !== 1) {
+                newMatchLink = matchLink.slice(1);
+            }
+            links.push(`${baseURL}${newMatchLink}`);
+        } else {
+            links.push(matchLink);
         }
     }
 
-    //make all relative links into absolute links
-    const cleanLinks = []
-    for (let link of links) {
-        if (link[0] === '/') {
-            cleanLinks.push(`${baseURL}${link}`);
-        }
-        else {
-            cleanLinks.push(link)
-        }
-    }
-
-    return cleanLinks
+    return links
 }
 
-export { normalizeURL, getURLsFromHTML };
+async function crawl(baseURL) {
+    //assume default protocol of https
+    const protocol = 'https://'
+    if (!baseURL.includes('://')) {
+        baseURL = `${protocol}${baseURL}`
+    }
+
+    //assume default route of .com
+    const route = '.com'
+    if (!baseURL.includes('.')) {
+        baseURL = `${baseURL}${route}`
+    }
+
+    //validate argument is a url
+    try {
+        const urlObj = new URL(baseURL);
+    } catch (err) {
+        console.log(`${baseURL} is not a valid url`);
+        return 1;
+    }
+
+    //inform user crawl is beginning
+    console.log(`Beginning crawl of page ${normalizeURL(baseURL)}...`);
+    
+    //run recursive crawl function, returnning results
+    return await crawlPage(baseURL);
+}
+
+async function crawlPage(baseURL, currentURL = baseURL, pages = {}) {
+    //check to see if we've left the domain
+    if (!currentURL.startsWith(baseURL)) {
+        return pages; //we don't need to crawl
+    }
+
+    //add to count, or create new count
+    const currentName = normalizeURL(currentURL);
+    if (currentName in pages) {
+        pages[currentName]++;
+        return pages; //we've been here before
+    }
+    
+    pages[currentName] = 1;
+
+    //ensure successful recursion through current page
+    try {
+        //extract an html body from currentURL
+        const document = await getHTMLDocument(currentURL);
+        
+        //if url contains no html body, return pages
+        if (document === 1) {
+            return pages;
+        }
+
+        //get array of new links
+        const links = getURLsFromHTML(document, baseURL);
+
+        //recurse through all links
+        for (const link of links) {
+            await crawlPage(baseURL, link, pages);
+        }
+
+        //return result
+        return pages;
+    } catch (err) {
+        console.log(err);
+        return null;
+    }
+}
+
+async function getHTMLDocument(url) {
+    try{
+        const response = await fetch(url);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP status not okay. Staus: ${response.status}`);
+        }
+
+        // Check if the response is in HTML format
+        const contentType = response.headers.get('Content-Type');
+        if (!contentType || !contentType.includes('text/html')) {
+            throw new Error(`Expected HTML content, but received: ${contentType}`);
+        }
+        
+        //return html body
+        return response.text();
+    } catch (err) {
+        return 1;
+    }
+}
+
+export { normalizeURL, getURLsFromHTML, crawl };
